@@ -1,0 +1,549 @@
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using BeardedManStudios.Forge.Networking;
+using BeardedManStudios.Forge.Networking.Generated;
+using BeardedManStudios.Forge.Networking.Unity;
+
+// -------------------- Заметки ------------------
+// 1. Вызовы RPC исполняются только на том скрипте, с которого его вызвали
+//    Поэтому не надо дополнительно вписывать ID
+// 2. 
+
+public class Player : PlayerBehavior
+{
+    public GameObject[] objectsForHide;
+
+    public Transform prefabCorpse;
+
+    // Префаб лазера
+    public Transform laserPrefab;
+
+    // Место, где заканчивается дуло
+    public Transform endOfGun;
+
+    // Префаб звука выстрела
+    public Transform soundShot;
+
+    // Префаб вспышки
+    public Transform lightShot;
+
+    // Список рендереров для окраски
+    public Renderer[] rrs;
+
+    //The layermask the raycast shooting should use
+    [SerializeField]
+    private LayerMask raycastIncludeMask;
+
+    public uint ID = 0;
+    public int HP = 100;
+    public int Kills = 0;
+    public int PlayerPing = 0;
+    public string Name;
+
+    Transform camTransform;
+    Camera playerCam;
+
+    // Таймер для пингования сервера
+    float timerPing1;
+    float rateTimerPing1 = 1.0f;
+
+    // Таймер для окраски персонажа обратно
+    float timerColor1;
+    float rateTimerColor1 = 1.0f;
+
+    // Таймер для респауна после смерти
+    float timerRespawn;
+    float rateTimerRespawn = 5;
+
+    // Таймер для прыжков
+    float timeJumping;
+
+    // Трансформа головы
+    Transform head;
+
+    //A timer that defines when a weapon can shoot again
+    private float nextShotTime;
+
+    public bool isSurface;
+    public bool isJumping;
+    public bool isGrounded;
+
+    private float inputx;
+    private float inputy;
+    private float inputJump;
+
+    private bool isGroundedOld = true;
+
+    private float mousex;
+    private float mousey;
+    private float maxSpeed = 10.0f;
+    private float currentSpeed = 10.0f;
+    private float startJumpSpeed;
+    private Vector3 moveDir;
+    private Vector3 jumpVector;
+    private float delta;
+
+    public LayerMask layerMaskForMoving;
+
+    protected override void NetworkStart()
+    {
+        base.NetworkStart();
+
+        NetworkManager.Instance.Networker.onPingPong += OnPingPong;
+
+        if (networkObject.IsOwner)
+        {
+            MainScript main = GameObject.FindObjectOfType<MainScript>();
+            networkObject.SendRpc(PlayerBehavior.RPC_UPDATE_NAME, Receivers.AllBuffered, main.ifNickname.text);
+            networkObject.SendRpc(PlayerBehavior.RPC_UPDATE_ID, Receivers.AllBuffered, networkObject.NetworkId);
+
+            LocalSpawn();
+        }
+
+        if (NetworkManager.Instance.Networker is IServer) {
+            //here you can also do some server specific code
+        }
+        else {
+            //setup the disconnected event
+            NetworkManager.Instance.Networker.disconnected += DisconnectedFromServer; }
+    }
+    
+    private void Start()
+    {
+        timeJumping = Time.time;
+
+        //Cursor.lockState = CursorLockMode.Locked;
+        //Cursor.visible = false;
+
+        // Выключаем таймер
+        timerColor1 = Mathf.Infinity;
+        timerRespawn = Mathf.Infinity;
+
+        //
+        //SetColor(Color.blue);
+
+        head = transform.Find("Head");
+
+        if (networkObject.IsOwner) {
+            // Забираем главную камеру
+            GameObject cam = GameObject.FindGameObjectWithTag("MainCamera");
+            cam.transform.parent = this.transform;
+            camTransform = cam.transform;
+
+            camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
+            camTransform.localRotation = Quaternion.identity;
+
+            
+
+            playerCam = cam.GetComponent<Camera>();
+
+            //RigidbodyFirstPersonController rigidbodyFirstPersonController;
+            //rigidbodyFirstPersonController = this.GetComponent<RigidbodyFirstPersonController>();
+            //rigidbodyFirstPersonController.cam = cam.GetComponent<Camera>();
+
+
+            head.parent = camTransform;
+        }
+        else {
+            //GetComponent<RigidbodyFirstPersonController>().enabled = false;
+        }
+    }
+
+    private void Update() {
+        // Недоумевал, почему не у всех перекрашивается. Надо было до return ставить.
+        if (timerColor1 < Time.time) {
+            timerColor1 = Mathf.Infinity;
+            ResetColor();
+        }
+
+
+
+        // If we are not the owner of this network object then we should
+        // move this cube to the position/rotation dictated by the owner
+        if (!networkObject.IsOwner) {
+
+            transform.position = networkObject.position;
+            transform.rotation = networkObject.rotation;
+            head.rotation = networkObject.headRotation;
+            return;
+        }
+
+        if (timerRespawn < Time.time) {
+            timerRespawn = Mathf.Infinity;
+            LocalSpawn();
+        }
+
+        // Стреляем
+        if (Input.GetButton("Fire1")) {
+            //Debug.Log("Mouse 0 hit");
+            LocalShoot();
+        }
+
+        // Если упали сильно низко, то респавнимся
+        if (transform.position.y < -100) { LocalSpawn(); }
+
+        // Движение персонажа
+        inputx = Input.GetAxis("Horizontal");
+        inputy = Input.GetAxis("Vertical");
+        inputJump = Input.GetAxis("Jump");
+
+        if (inputx != 0 || inputy != 0) {
+            currentSpeed = maxSpeed;
+        }
+        else {
+            currentSpeed = 0;
+        }
+
+        if (Input.GetKey(KeyCode.LeftShift)) {
+            currentSpeed = maxSpeed * 2;
+        }
+
+        // Прыгаем
+        if (inputJump > 0 && isGrounded) {
+            timeJumping = Time.time;
+            isJumping = true;
+            isGrounded = false;
+            transform.position += Vector3.up * 0.01f;
+            startJumpSpeed = currentSpeed;
+        }
+        
+        // Нужно перезапускать таймер прыжка каждый раз, когда меняется isGrounded
+        //if (isGrounded != isGroundedOld) {
+        //    if (isGrounded == false && isJumping == false) {
+        //        timeJumping = Time.time;
+        //    }
+        //    isGroundedOld = isGrounded;
+        //}
+
+        delta = Time.deltaTime;
+
+        mousex = Input.GetAxis("Mouse X");
+        mousey = Input.GetAxis("Mouse Y");
+
+        transform.Rotate(Vector3.up * 100 * delta * mousex);
+        camTransform.Rotate(-Vector3.right * 100 * delta * mousey);
+
+        if (timerPing1 < Time.time) {
+            timerPing1 = Time.time + rateTimerPing1;
+
+            networkObject.Networker.Me.Ping();
+        }
+    }
+    
+    private void FixedUpdate() {
+        // Начинаем проверять виртуальный шар игрока на упирание в препятствия
+        // always move along the camera forward as it is the direction that it being aimed at
+        Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
+
+        // get a normal for the surface that is being touched to move along it
+        RaycastHit hitInfo2;
+        
+        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitInfo2,
+            1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
+
+        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitInfo2.normal).normalized;
+
+        moveDir.x = desiredMove.x * currentSpeed * delta;
+        moveDir.z = desiredMove.z * currentSpeed * delta;
+
+        isGrounded = Physics.SphereCast(transform.position + Vector3.up, 1.0f, Vector3.down, out hitInfo2,
+            1.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
+
+        if (!isGrounded && !isJumping) {
+            moveDir.y -= 0.5f * delta;
+        }
+        else {
+            moveDir.y = 0;
+        }
+
+        // y = V0 * sin(a) * t - (g * t * t) / 2.0f
+        // z = V0 * cos(a) * t
+
+        float t = Time.time - timeJumping;
+        float angle = 90;
+        if (startJumpSpeed == 0) {
+            angle = 180;
+            startJumpSpeed = maxSpeed;
+        }
+        
+        if (isJumping && !isGrounded) {
+            jumpVector = new Vector3(
+                    0,
+                    startJumpSpeed * Mathf.Sin(angle * Mathf.Deg2Rad) * t - (9.81f * t * t) / 2.0f,
+                    startJumpSpeed * Mathf.Cos(angle * Mathf.Deg2Rad) * t
+                );
+        }
+        if (isJumping && isGrounded) {
+            jumpVector = Vector3.zero;
+            isJumping = false;
+        }
+        moveDir += transform.rotation * jumpVector * delta;
+    }
+
+    private void LateUpdate() {
+        transform.position += moveDir;
+
+        // If we are the owner of the object we should send the new position
+        // and rotation across the network for receivers to move to in the above code
+        networkObject.position = transform.position;
+        networkObject.rotation = transform.rotation;
+        networkObject.headRotation = head.rotation;
+    }
+
+    //----------------------Client Events--------------------
+    
+    // Called when a player disconnects
+    private void DisconnectedFromServer(NetWorker sender) {
+        NetworkManager.Instance.Networker.disconnected -= DisconnectedFromServer;
+
+        MainThreadManager.Run(() => {
+            //Loop through the network objects to see if the disconnected player is the host
+            foreach (var no in sender.NetworkObjectList) {
+                if (no.Owner.IsHost) {
+                    BMSLogger.Instance.Log("Server disconnected");
+                    //Should probably make some kind of "You disconnected" screen. ah well
+                }
+            }
+            MainScript main = GameObject.FindObjectOfType<MainScript>();
+            main.CloseSession();
+            //NetworkManager.Instance.Disconnect();
+        });
+
+        
+    }
+    
+    private void OnPingPong(double ping, NetWorker sender) {
+        PlayerPing = (int)ping;
+        networkObject.SendRpc(RPC_UPDATE_PING, Receivers.AllBuffered, PlayerPing);
+    }
+
+    //-----------------RPC Calls----------------------------
+
+    // Override the abstract RPC method that we made in the NCW
+    public override void UpdateName(RpcArgs args)
+    {
+        // Since there is only 1 argument and it is a string we can safely
+        // cast the first argument to a string knowing that it is going to
+        // be the name for this player
+        Name = args.GetNext<string>();
+        transform.name = Name;
+        //networkObject.Networker.Me.Name = Name;
+    }
+    
+    // Override the abstract RPC method that we made in the NCW
+    public override void UpdatePing(RpcArgs args) {
+        // Since there is only 1 argument and it is a string we can safely
+        // cast the first argument to a string knowing that it is going to
+        // be the name for this player
+        PlayerPing = args.GetNext<int>();
+    }
+
+    public void LocalUpdateKills(int kills, uint playerID) {
+        networkObject.SendRpc(
+            PlayerBehavior.RPC_UPDATE_KILLS,
+            BeardedManStudios.Forge.Networking.Receivers.All,
+            kills);
+    }
+
+    // Override the abstract RPC method that we made in the NCW
+    public override void UpdateKills(RpcArgs args) {
+        // Since there is only 1 argument and it is a string we can safely
+        // cast the first argument to a string knowing that it is going to
+        // be the name for this player
+        int newKills = args.GetNext<int>();
+        Kills = newKills;
+    }
+
+    void LocalShoot() {
+        //Wait between shots
+        if (Time.time > nextShotTime) {
+            //set the next shot time
+            nextShotTime = Time.time + 1.0f;
+            //Find the points from the clients camera and send them to the server to calculate the shot from.
+            //On a fully server auth solution, the server would have a version of the camera and calculate the shot from that
+            Vector3 rayOrigin = playerCam.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, 0.0f));
+            Vector3 forward = playerCam.transform.forward;
+            //send the rpc
+            networkObject.SendRpc(PlayerBehavior.RPC_SHOOT, BeardedManStudios.Forge.Networking.Receivers.All, rayOrigin, forward);
+
+            //Debug.Log("Local Shoot " + rayOrigin + " " + forward);
+        }
+    }
+
+    // Стреляем по сети
+    public override void Shoot(RpcArgs args) {
+        Vector3 origin = args.GetNext<Vector3>();
+        Vector3 camForward = args.GetNext<Vector3>();
+
+        Instantiate(soundShot, endOfGun.position, Quaternion.identity);
+        Instantiate(lightShot, endOfGun.position, Quaternion.identity);
+
+        Transform tmp = (Transform)Instantiate(laserPrefab, endOfGun.position, Quaternion.LookRotation(camForward));
+        tmp.localScale = new Vector3(1, 1, 10000);
+        //tmp.parent = endOfGun;
+        //tmp.localPosition = Vector3.zero;
+
+        //Debug.Log("RPC Shoot " + origin + " " + camForward);
+
+        //Only make the server do the actual shooting
+        //if (networkObject.IsServer) {
+        RaycastHit hit;
+        Debug.DrawRay(origin, camForward * 10000, Color.black, 10);
+        //Debug.Break();
+
+        //Debug.Log("RPC Server Shoot " + origin + " " + camForward);
+
+        //Do the actual raycast on the server
+        if (Physics.Raycast(origin, camForward, out hit, 10000, raycastIncludeMask)) {
+            //If the current weapon doesn't use projectiles
+            Player enemyPlayer = hit.collider.GetComponent<Player>();
+            if (enemyPlayer) {
+                Debug.Log("Detected hit " + hit.point);
+                // call take damage and supply some raycast hit information
+                if (networkObject.IsServer) {
+                    // Это должно вызываться на том, в кого попали
+                    enemyPlayer.LocalTakeDamage(50, ID, hit.point, hit.normal);
+                }
+                //networkObject.SendRpc(PlayerBehavior.RPC_TAKE_DAMAGE, BeardedManStudios.Forge.Networking.Receivers.All, 50, ID);
+            }
+
+            tmp.localScale = new Vector3(1, 1, Vector3.Distance(hit.point, endOfGun.position));
+        }
+        //}
+    }
+
+    // damage повреждение, id киллера, точка попадания, нормаль попадания
+    public void LocalTakeDamage(int damage, uint playerID, Vector3 point, Vector3 normal) {
+        networkObject.SendRpc(
+            PlayerBehavior.RPC_TAKE_DAMAGE,
+            BeardedManStudios.Forge.Networking.Receivers.All,
+            damage,
+            playerID,
+            point,
+            normal);
+    }
+
+    public override void TakeDamage(RpcArgs args) {
+        int damage = args.GetNext<int>();
+        uint playerID = args.GetNext<uint>();
+        Vector3 point = args.GetNext<Vector3>();
+        Vector3 normal = args.GetNext<Vector3>();
+
+        HP -= damage;
+
+        SetColor(Color.red);
+        timerColor1 = Time.time + rateTimerColor1;
+
+        if (HP <= 0) {
+            HP = 100;
+            // Здесь нужно послать сообщение, что игрок убит игроком 2
+            // Ещё включить анимацию убийста, может, просто ригидбади включить и пусть робот валится
+            // И отреспаунить игрока
+            // Ещё киллсов добавить
+            Player winner = FindPlayerByID(playerID);
+            winner.LocalUpdateKills(winner.Kills + 1, playerID);
+
+            //GetComponent<RigidbodyFirstPersonController>().enabled = false;
+            //camTransform.localPosition = transform.position + Vector3.up * 10;
+            //camTransform.SetParent(null);
+            //camTransform.LookAt(transform.position);
+
+            // Чтобы труп игрока не оказался в одном месте с игроком
+            Hide();
+            this.GetComponent<Collider>().isTrigger = true;
+
+            Transform tmp = (Transform)Instantiate(prefabCorpse, transform.position, transform.rotation);
+
+            Rigidbody rb = tmp.GetComponent<Rigidbody>();
+            rb.AddForce(-normal * 10, ForceMode.Impulse);
+
+            timerRespawn = Time.time + rateTimerRespawn;
+            if (networkObject.IsOwner) {
+                camTransform.position += Vector3.up * 25; // + Vector3.right * 10 + Vector3.forward * 10;
+                camTransform.LookAt(tmp.position);
+            }
+        }
+    }
+
+    // Override the abstract RPC method that we made in the NCW
+    public override void UpdateId(RpcArgs args) {
+        // Since there is only 1 argument and it is a string we can safely
+        // cast the first argument to a string knowing that it is going to
+        // be the name for this player
+        uint id = args.GetNext<uint>();
+        ID = id;
+    }
+
+    //---------------------Additional Functions--------------------------
+
+    public void ResetColor() {
+        SetColor(Color.white);
+    }
+
+    // Прячем дочерние объекты
+    public void Hide() {
+        for (int i = 0; i < objectsForHide.Length; i++) {
+            objectsForHide[i].SetActive(false);
+        }
+    }
+
+    // Показываем дочерние объекты
+    public void Show() {
+        for (int i = 0; i < objectsForHide.Length; i++) {
+            objectsForHide[i].SetActive(true);
+        }
+    }
+
+    public void SetColor(Color newColor) {
+
+        //Renderer[] rrs = gameObject.GetComponentsInChildren<Renderer>();
+
+        //Debug.Log("rrs.length " + rrs.Length);
+
+        for (int i = 0; i < rrs.Length; i++) {
+            rrs[i].materials[0].SetColor("_Color", newColor);
+        }
+    }
+
+    // Для работы поиска необходимо, чтобы Player.ID = networkObject.NetworkID
+    Player FindPlayerByID(uint playerID) {
+        Player player = null;
+        GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
+        for (int i = 0; i < players.Length; i++) {
+            player = players[i].GetComponent<Player>();
+            if (player.ID == playerID) {
+                return player;
+            }
+        }
+        return player;
+    }
+
+    public void LocalSpawn() {
+        // Появление в случайной точке из набора координат объектов с тегом Respawn
+        GameObject[] spawnPoints = GameObject.FindGameObjectsWithTag("Respawn");
+        int rnd = spawnPoints.Length - 1;
+        networkObject.SendRpc(
+            PlayerBehavior.RPC_SPAWN,
+            BeardedManStudios.Forge.Networking.Receivers.All,
+            spawnPoints[rnd].transform.position,
+            spawnPoints[rnd].transform.rotation);
+    }
+
+    public override void Spawn(RpcArgs args) {
+        Vector3 pos = args.GetNext<Vector3>();
+        Quaternion rot = args.GetNext<Quaternion>();
+
+        this.GetComponent<Collider>().isTrigger = false;
+        Show();
+
+        if (networkObject.IsOwner) {
+            camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
+            camTransform.localRotation = Quaternion.identity;
+        }
+
+        this.transform.position = pos;
+        this.transform.rotation = rot;
+    }
+}

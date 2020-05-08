@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+//using UnityEditor;
 
 public enum GameScreen
 {
@@ -67,7 +68,11 @@ public class MainScript : MonoBehaviour
     // Use this for initialization
     void Start()
     {
+        //versionText.text = PlayerSettings.bundleVersion;
+
         playerList = new List<Player>();
+
+        // Ограничиваем фпс в случае, если это будет запущено под линуксом без графики
         Application.targetFrameRate = 60;
 
         // Если ник пустой, то делаем рандомный

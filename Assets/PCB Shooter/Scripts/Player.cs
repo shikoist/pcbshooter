@@ -42,8 +42,12 @@ public class Player : PlayerBehavior
     public int PlayerPing = 0;
     public string Name;
 
-    Transform camTransform;
-    Camera playerCam;
+    // Вилка, на которой две камеры - пустой объект
+    Transform cams;
+
+    // Прямые ссылки на две камеры
+    Camera playerCamL;
+    Camera playerCamR;
 
     // Таймер для пингования сервера
     float timerPing1;
@@ -87,6 +91,10 @@ public class Player : PlayerBehavior
 
     public LayerMask layerMaskForMoving;
 
+    private bool isDead = false;
+
+    private bool stereoMode = false;
+
     protected override void NetworkStart()
     {
         base.NetworkStart();
@@ -128,23 +136,19 @@ public class Player : PlayerBehavior
 
         if (networkObject.IsOwner) {
             // Забираем главную камеру
-            GameObject cam = GameObject.FindGameObjectWithTag("MainCamera");
-            cam.transform.parent = this.transform;
-            camTransform = cam.transform;
+            cams = GameObject.FindGameObjectWithTag("MainCamera").transform;
 
-            camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
-            camTransform.localRotation = Quaternion.identity;
+            // Временно присваиваем родителя, чтобы правильно поставить камеру относительно персонажа
+            cams.parent = this.transform;
+            cams.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно руки.
+            cams.localRotation = Quaternion.identity;
 
-            
+            playerCamL = cams.transform.Find("CameraLeft").GetComponent<Camera>();
+            playerCamR = cams.transform.Find("CameraRight").GetComponent<Camera>();
+            playerCamR.enabled = false;
 
-            playerCam = cam.GetComponent<Camera>();
-
-            //RigidbodyFirstPersonController rigidbodyFirstPersonController;
-            //rigidbodyFirstPersonController = this.GetComponent<RigidbodyFirstPersonController>();
-            //rigidbodyFirstPersonController.cam = cam.GetComponent<Camera>();
-
-
-            head.parent = camTransform;
+            // Теперь указываем в качестве родителя головы камеру. Камера будет рулить головой.
+            head.parent = cams.transform;
         }
         else {
             //GetComponent<RigidbodyFirstPersonController>().enabled = false;
@@ -157,8 +161,6 @@ public class Player : PlayerBehavior
             timerColor1 = Mathf.Infinity;
             ResetColor();
         }
-
-
 
         // If we are not the owner of this network object then we should
         // move this cube to the position/rotation dictated by the owner
@@ -175,19 +177,20 @@ public class Player : PlayerBehavior
             LocalSpawn();
         }
 
-        // Стреляем
-        if (Input.GetButton("Fire1")) {
+        // Стреляем только, если не мертвы
+        if (!isDead && Input.GetButton("Fire1")) {
             //Debug.Log("Mouse 0 hit");
             LocalShoot();
         }
 
-        // Если упали сильно низко, то респавнимся
-        if (transform.position.y < -100) { LocalSpawn(); }
+
 
         // Движение персонажа
-        inputx = Input.GetAxis("Horizontal");
-        inputy = Input.GetAxis("Vertical");
-        inputJump = Input.GetAxis("Jump");
+        if (!isDead) {
+            inputx = Input.GetAxis("Horizontal");
+            inputy = Input.GetAxis("Vertical");
+            inputJump = Input.GetAxis("Jump");
+        }
 
         if (inputx != 0 || inputy != 0) {
             currentSpeed = maxSpeed;
@@ -201,12 +204,12 @@ public class Player : PlayerBehavior
         }
 
         // Прыгаем
-        if (inputJump > 0 && isGrounded) {
+        if (inputJump > 0 && isGrounded && !isDead && !isJumping) {
             timeJumping = Time.time;
             isJumping = true;
             isGrounded = false;
-            transform.position += Vector3.up * 0.01f;
-            startJumpSpeed = currentSpeed;
+            transform.position += Vector3.up * 0.05f;
+            startJumpSpeed = maxSpeed * 2;
         }
         
         // Нужно перезапускать таймер прыжка каждый раз, когда меняется isGrounded
@@ -219,27 +222,53 @@ public class Player : PlayerBehavior
 
         delta = Time.deltaTime;
 
-        mousex = Input.GetAxis("Mouse X");
-        mousey = Input.GetAxis("Mouse Y");
+        if (!isDead) {
+            mousex = Input.GetAxis("Mouse X");
+            mousey = Input.GetAxis("Mouse Y");
+        }
 
-        transform.Rotate(Vector3.up * 100 * delta * mousex);
-        camTransform.Rotate(-Vector3.right * 100 * delta * mousey);
+        // Поворот головы слева направо
+        Vector3 rotX = Vector3.up * 100 * delta * mousex;
+
+        // Поворот головы вверх-вниз
+        Vector3 rotY = -Vector3.right * 100 * delta * mousey;
+
+        // Поворачиваем персонажа по вертикальной оси слева-направо
+        transform.Rotate(rotX);
+
+        // Камеры только вверх-вниз
+        cams.Rotate(rotY);
 
         if (timerPing1 < Time.time) {
             timerPing1 = Time.time + rateTimerPing1;
 
             networkObject.Networker.Me.Ping();
         }
+
+        if (Input.GetKeyDown(KeyCode.F6)) {
+            stereoMode = !stereoMode;
+            ToggleStereoMode(stereoMode);
+        }
+
+        // Если упали сильно низко, то респавнимся
+        if (transform.position.y < -100) {
+            isDead = true;
+            isJumping = false;
+            isGrounded = false;
+            jumpVector = Vector3.zero;
+            LocalSpawn();
+        }
     }
     
     private void FixedUpdate() {
+        
         // Начинаем проверять виртуальный шар игрока на упирание в препятствия
         // always move along the camera forward as it is the direction that it being aimed at
         Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
 
         // get a normal for the surface that is being touched to move along it
         RaycastHit hitInfo2;
-        
+
         isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitInfo2,
             1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
@@ -261,13 +290,13 @@ public class Player : PlayerBehavior
         // y = V0 * sin(a) * t - (g * t * t) / 2.0f
         // z = V0 * cos(a) * t
 
-        float t = Time.time - timeJumping;
+        float t = (Time.time - timeJumping) * 3.6f;
         float angle = 90;
         if (startJumpSpeed == 0) {
             angle = 180;
             startJumpSpeed = maxSpeed;
         }
-        
+
         if (isJumping && !isGrounded) {
             jumpVector = new Vector3(
                     0,
@@ -280,6 +309,7 @@ public class Player : PlayerBehavior
             isJumping = false;
         }
         moveDir += transform.rotation * jumpVector * delta;
+        
     }
 
     private void LateUpdate() {
@@ -290,6 +320,38 @@ public class Player : PlayerBehavior
         networkObject.position = transform.position;
         networkObject.rotation = transform.rotation;
         networkObject.headRotation = head.rotation;
+    }
+
+    //----------------------------Functions -----------------------
+    void ToggleStereoMode(bool mode) {
+        // Если режим стерео включен
+        if (mode == true) {
+            // Камера теперь показывает только в левую часть экрана
+            playerCamL.rect = new Rect(0, 0, 0.5f, 1);
+            
+            // Отодвинем камеру влево для стерео-эффекта
+            playerCamL.transform.localPosition = new Vector3(-0.035f, 0, 0); 
+            
+            // Включаем ранее отключенную правую камеру
+            playerCamR.enabled = true;
+
+            // Камера теперь показывает только в правую часть экрана
+            playerCamR.rect = new Rect(0.5f, 0, 0.5f, 1);
+
+            // Отодвинем камеру вправо для стерео-эффекта
+            playerCamR.transform.localPosition = new Vector3(0.035f, 0, 0);
+        }
+        // Если стерео режим отключен
+        if (mode == false) {
+            // Правая камера отключается
+            playerCamR.enabled = false;
+
+            // Левая камера теперь рендерит на весь экран
+            playerCamL.rect = new Rect(0, 0, 1, 1);
+
+            // Левая камера на исходнйо позиции
+            playerCamL.transform.localPosition = new Vector3(0, 0, 0); // 
+        }
     }
 
     //----------------------Client Events--------------------
@@ -363,8 +425,8 @@ public class Player : PlayerBehavior
             nextShotTime = Time.time + 1.0f;
             //Find the points from the clients camera and send them to the server to calculate the shot from.
             //On a fully server auth solution, the server would have a version of the camera and calculate the shot from that
-            Vector3 rayOrigin = playerCam.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, 0.0f));
-            Vector3 forward = playerCam.transform.forward;
+            Vector3 rayOrigin = playerCamL.ViewportToWorldPoint(new Vector3(0.5f, 0.5f, 0.0f));
+            Vector3 forward = playerCamL.transform.forward;
             //send the rpc
             networkObject.SendRpc(PlayerBehavior.RPC_SHOOT, BeardedManStudios.Forge.Networking.Receivers.All, rayOrigin, forward);
 
@@ -452,6 +514,7 @@ public class Player : PlayerBehavior
 
             // Чтобы труп игрока не оказался в одном месте с игроком
             Hide();
+            isDead = true;
             this.GetComponent<Collider>().isTrigger = true;
 
             Transform tmp = (Transform)Instantiate(prefabCorpse, transform.position, transform.rotation);
@@ -461,8 +524,8 @@ public class Player : PlayerBehavior
 
             timerRespawn = Time.time + rateTimerRespawn;
             if (networkObject.IsOwner) {
-                camTransform.position += Vector3.up * 25; // + Vector3.right * 10 + Vector3.forward * 10;
-                camTransform.LookAt(tmp.position);
+                cams.position += Vector3.up * 25; // + Vector3.right * 10 + Vector3.forward * 10;
+                cams.LookAt(tmp.position);
             }
         }
     }
@@ -523,7 +586,7 @@ public class Player : PlayerBehavior
     public void LocalSpawn() {
         // Появление в случайной точке из набора координат объектов с тегом Respawn
         GameObject[] spawnPoints = GameObject.FindGameObjectsWithTag("Respawn");
-        int rnd = spawnPoints.Length - 1;
+        int rnd = UnityEngine.Random.Range(0, spawnPoints.Length - 1);
         networkObject.SendRpc(
             PlayerBehavior.RPC_SPAWN,
             BeardedManStudios.Forge.Networking.Receivers.All,
@@ -535,12 +598,14 @@ public class Player : PlayerBehavior
         Vector3 pos = args.GetNext<Vector3>();
         Quaternion rot = args.GetNext<Quaternion>();
 
+        isDead = false;
+
         this.GetComponent<Collider>().isTrigger = false;
         Show();
 
         if (networkObject.IsOwner) {
-            camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
-            camTransform.localRotation = Quaternion.identity;
+            //camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
+            //camTransform.localRotation = Quaternion.identity;
         }
 
         this.transform.position = pos;

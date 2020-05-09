@@ -15,6 +15,7 @@ using BeardedManStudios.Forge.Networking.Unity;
 public class Player : PlayerBehavior
 {
     public float height = 1.8f;
+    public float camOffset = 0.3f;
 
     public Transform explosionPrefab;
     public Transform explosion3DSound;
@@ -68,7 +69,7 @@ public class Player : PlayerBehavior
     float rateTimerRespawn = 5;
 
     // Таймер для прыжков
-    float timeJumping;
+    float timeJump;
 
     // Трансформа головы
     Transform head;
@@ -126,7 +127,7 @@ public class Player : PlayerBehavior
     
     private void Start()
     {
-        timeJumping = Time.time;
+        timeJump = Time.time;
 
         //Cursor.lockState = CursorLockMode.Locked;
         //Cursor.visible = false;
@@ -146,7 +147,7 @@ public class Player : PlayerBehavior
 
             // Временно присваиваем родителя, чтобы правильно поставить камеру относительно персонажа
             cams.parent = this.transform;
-            cams.localPosition = new Vector3(0, height, 0.5f); // Отодвинем камеру, чтобы было видно руки.
+            cams.localPosition = new Vector3(0, height, camOffset); // Отодвинем камеру, чтобы было видно руки.
             cams.localRotation = Quaternion.identity;
 
             playerCamL = cams.transform.Find("CameraLeft").GetComponent<Camera>();
@@ -188,9 +189,7 @@ public class Player : PlayerBehavior
             //Debug.Log("Mouse 0 hit");
             LocalShoot();
         }
-
-
-
+               
         // Движение персонажа
         if (!isDead) {
             inputx = Input.GetAxis("Horizontal");
@@ -211,10 +210,10 @@ public class Player : PlayerBehavior
 
         // Прыгаем
         if (inputJump > 0 && isGrounded && !isDead && !isJumping) {
-            timeJumping = Time.time;
+            timeJump = Time.time;
             isJumping = true;
-            transform.position += Vector3.up * 0.5f;
-            startJumpSpeed = maxSpeed;
+            transform.position += Vector3.up * 0.01f;
+            startJumpSpeed = maxSpeed / 3.0f;
         }
         
         // Нужно перезапускать таймер прыжка каждый раз, когда меняется isGrounded
@@ -266,25 +265,27 @@ public class Player : PlayerBehavior
         Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
 
         // get a normal for the surface that is being touched to move along it
-        RaycastHit hitGrounded;
+        RaycastHit hitSurface;
 
         // Здесь мы тыкаем условным шаром на пересечение с поверхностями по горизонталыной плоскости
-        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitGrounded,
+        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitSurface,
             1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
         // Вектор проецируемый даёт возможность "скользить" вдоль стен
-        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitGrounded.normal).normalized;
+        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitSurface.normal).normalized;
 
         moveDir.x = desiredMove.x * currentSpeed * delta;
         moveDir.z = desiredMove.z * currentSpeed * delta;
 
+        RaycastHit hitGround;
+
         // А здесь мы тыкаем шаром вниз...
-        bool tmpGround = Physics.SphereCast(transform.position + Vector3.up * 100, 200.0f, Vector3.down, out hitGrounded,
+        bool tmpGround = Physics.SphereCast(transform.position + Vector3.up * 100, 0.9f, Vector3.down, out hitGround,
             200.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
         if (tmpGround) {
-            if (transform.position.y - hitGrounded.point.y < 0.1f) {
-                transform.position = new Vector3(transform.position.x, hitGrounded.point.y, transform.position.z);
+            if (transform.position.y - hitGround.point.y <= 0.0f) {
+                transform.position = new Vector3(transform.position.x, hitGround.point.y, transform.position.z);
                 isGrounded = true;
             }
             else { isGrounded = false; }
@@ -294,7 +295,7 @@ public class Player : PlayerBehavior
         }
 
         Text debug = GameObject.Find("DebugInfo").GetComponent<Text>();
-        debug.text = (transform.position.y - hitGrounded.point.y).ToString();
+        debug.text = (transform.position.y - hitGround.point.y).ToString("F2");
 
         if (!isJumping) {
             if (!isGrounded) {
@@ -307,23 +308,17 @@ public class Player : PlayerBehavior
 
         // y = V0 * sin(a) * t - (g * t * t) / 2.0f
         // z = V0 * cos(a) * t
+        // Поскольку движение в прыжке определяет игрок, то формула значительно сократилась.
+        // Помним, что косинус 90 это ноль, а синус 90 это единица
 
-        float t = (Time.time - timeJumping) * 3.6f;
-        //float t = (Time.time - timeJumping) / 3.6f;
-        float angle = 90;
-        if (startJumpSpeed == 0) {
-            angle = 180;
-            startJumpSpeed = maxSpeed;
-        }
+        float t = (Time.time - timeJump) * 1.0f;
 
         if (isJumping && !isGrounded) {
             jumpVector = new Vector3(
-                    0,
-                    //startJumpSpeed * Mathf.Sin(angle * Mathf.Deg2Rad) * t - (9.81f * t * t) / 2.0f,
-                    startJumpSpeed * t - (9.81f * t * t) / 2.0f,
-                    //startJumpSpeed * Mathf.Cos(angle * Mathf.Deg2Rad) * t
-                    0
-                );
+                0,
+                startJumpSpeed * t - (9.81f * t * t) / 2.0f,
+                0
+            );
         }
         if (isJumping && isGrounded) {
             jumpVector = Vector3.zero;
@@ -630,7 +625,7 @@ public class Player : PlayerBehavior
         Show();
 
         if (networkObject.IsOwner) {
-            cams.localPosition = new Vector3(0, height, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
+            cams.localPosition = new Vector3(0, height, camOffset); // Отодвинем камеру, чтобы было видно аватар.
             cams.localRotation = Quaternion.identity;
         }
 

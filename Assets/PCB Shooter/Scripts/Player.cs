@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 using BeardedManStudios.Forge.Networking;
 using BeardedManStudios.Forge.Networking.Generated;
 using BeardedManStudios.Forge.Networking.Unity;
@@ -13,6 +14,11 @@ using BeardedManStudios.Forge.Networking.Unity;
 
 public class Player : PlayerBehavior
 {
+    public float height = 1.8f;
+
+    public Transform explosionPrefab;
+    public Transform explosion3DSound;
+
     public GameObject[] objectsForHide;
 
     public Transform prefabCorpse;
@@ -140,7 +146,7 @@ public class Player : PlayerBehavior
 
             // Временно присваиваем родителя, чтобы правильно поставить камеру относительно персонажа
             cams.parent = this.transform;
-            cams.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно руки.
+            cams.localPosition = new Vector3(0, height, 0.5f); // Отодвинем камеру, чтобы было видно руки.
             cams.localRotation = Quaternion.identity;
 
             playerCamL = cams.transform.Find("CameraLeft").GetComponent<Camera>();
@@ -207,9 +213,8 @@ public class Player : PlayerBehavior
         if (inputJump > 0 && isGrounded && !isDead && !isJumping) {
             timeJumping = Time.time;
             isJumping = true;
-            isGrounded = false;
-            transform.position += Vector3.up * 0.05f;
-            startJumpSpeed = maxSpeed * 2;
+            transform.position += Vector3.up * 0.5f;
+            startJumpSpeed = maxSpeed;
         }
         
         // Нужно перезапускать таймер прыжка каждый раз, когда меняется isGrounded
@@ -253,44 +258,58 @@ public class Player : PlayerBehavior
         // Если упали сильно низко, то респавнимся
         if (transform.position.y < -100) {
             isDead = true;
-            isJumping = false;
-            isGrounded = false;
-            jumpVector = Vector3.zero;
             LocalSpawn();
         }
-    }
-    
-    private void FixedUpdate() {
-        
+
         // Начинаем проверять виртуальный шар игрока на упирание в препятствия
         // always move along the camera forward as it is the direction that it being aimed at
         Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
 
         // get a normal for the surface that is being touched to move along it
-        RaycastHit hitInfo2;
+        RaycastHit hitGrounded;
 
-        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitInfo2,
+        // Здесь мы тыкаем условным шаром на пересечение с поверхностями по горизонталыной плоскости
+        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitGrounded,
             1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
-        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitInfo2.normal).normalized;
+        // Вектор проецируемый даёт возможность "скользить" вдоль стен
+        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitGrounded.normal).normalized;
 
         moveDir.x = desiredMove.x * currentSpeed * delta;
         moveDir.z = desiredMove.z * currentSpeed * delta;
 
-        isGrounded = Physics.SphereCast(transform.position + Vector3.up, 1.0f, Vector3.down, out hitInfo2,
-            1.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
+        // А здесь мы тыкаем шаром вниз...
+        bool tmpGround = Physics.SphereCast(transform.position + Vector3.up * 100, 200.0f, Vector3.down, out hitGrounded,
+            200.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
-        if (!isGrounded && !isJumping) {
-            moveDir.y -= 0.5f * delta;
+        if (tmpGround) {
+            if (transform.position.y - hitGrounded.point.y < 0.1f) {
+                transform.position = new Vector3(transform.position.x, hitGrounded.point.y, transform.position.z);
+                isGrounded = true;
+            }
+            else { isGrounded = false; }
         }
         else {
-            moveDir.y = 0;
+            isGrounded = false;
+        }
+
+        Text debug = GameObject.Find("DebugInfo").GetComponent<Text>();
+        debug.text = (transform.position.y - hitGrounded.point.y).ToString();
+
+        if (!isJumping) {
+            if (!isGrounded) {
+                moveDir.y -= 0.5f * delta;
+            }
+            else {
+                moveDir.y = 0;
+            }
         }
 
         // y = V0 * sin(a) * t - (g * t * t) / 2.0f
         // z = V0 * cos(a) * t
 
         float t = (Time.time - timeJumping) * 3.6f;
+        //float t = (Time.time - timeJumping) / 3.6f;
         float angle = 90;
         if (startJumpSpeed == 0) {
             angle = 180;
@@ -300,8 +319,10 @@ public class Player : PlayerBehavior
         if (isJumping && !isGrounded) {
             jumpVector = new Vector3(
                     0,
-                    startJumpSpeed * Mathf.Sin(angle * Mathf.Deg2Rad) * t - (9.81f * t * t) / 2.0f,
-                    startJumpSpeed * Mathf.Cos(angle * Mathf.Deg2Rad) * t
+                    //startJumpSpeed * Mathf.Sin(angle * Mathf.Deg2Rad) * t - (9.81f * t * t) / 2.0f,
+                    startJumpSpeed * t - (9.81f * t * t) / 2.0f,
+                    //startJumpSpeed * Mathf.Cos(angle * Mathf.Deg2Rad) * t
+                    0
                 );
         }
         if (isJumping && isGrounded) {
@@ -309,7 +330,6 @@ public class Player : PlayerBehavior
             isJumping = false;
         }
         moveDir += transform.rotation * jumpVector * delta;
-        
     }
 
     private void LateUpdate() {
@@ -519,6 +539,9 @@ public class Player : PlayerBehavior
 
             Transform tmp = (Transform)Instantiate(prefabCorpse, transform.position, transform.rotation);
 
+            Instantiate(explosion3DSound, transform.position, transform.rotation);
+            Instantiate(explosionPrefab, transform.position, transform.rotation);
+
             Rigidbody rb = tmp.GetComponent<Rigidbody>();
             rb.AddForce(-normal * 10, ForceMode.Impulse);
 
@@ -587,6 +610,9 @@ public class Player : PlayerBehavior
         // Появление в случайной точке из набора координат объектов с тегом Respawn
         GameObject[] spawnPoints = GameObject.FindGameObjectsWithTag("Respawn");
         int rnd = UnityEngine.Random.Range(0, spawnPoints.Length - 1);
+
+        isJumping = false;
+
         networkObject.SendRpc(
             PlayerBehavior.RPC_SPAWN,
             BeardedManStudios.Forge.Networking.Receivers.All,
@@ -604,8 +630,8 @@ public class Player : PlayerBehavior
         Show();
 
         if (networkObject.IsOwner) {
-            //camTransform.localPosition = new Vector3(0, 1.8f, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
-            //camTransform.localRotation = Quaternion.identity;
+            cams.localPosition = new Vector3(0, height, 0.5f); // Отодвинем камеру, чтобы было видно аватар.
+            cams.localRotation = Quaternion.identity;
         }
 
         this.transform.position = pos;

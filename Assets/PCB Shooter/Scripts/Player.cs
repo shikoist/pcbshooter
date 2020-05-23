@@ -14,6 +14,8 @@ using BeardedManStudios.Forge.Networking.Unity;
 
 public class Player : PlayerBehavior
 {
+    public Transform cameras;
+
     public float height = 1.8f;
     public float camOffset = 0.3f;
 
@@ -102,6 +104,14 @@ public class Player : PlayerBehavior
 
     private bool stereoMode = false;
 
+    public float Speed = 0.3f;
+    public float JumpForce = 1f;
+
+    public LayerMask GroundLayer = 1;
+
+    private Rigidbody _rb;
+    private CapsuleCollider _collider;
+
     protected override void NetworkStart()
     {
         base.NetworkStart();
@@ -127,7 +137,15 @@ public class Player : PlayerBehavior
     
     private void Start()
     {
-        timeJump = Time.time;
+        _rb = GetComponent<Rigidbody>();
+        _collider = GetComponent<CapsuleCollider>();
+
+        _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+
+        if (GroundLayer == gameObject.layer)
+            Debug.LogError("Player SortingLayer must be different from Ground SourtingLayer!");
+
+        //timeJump = Time.time;
 
         //Cursor.lockState = CursorLockMode.Locked;
         //Cursor.visible = false;
@@ -142,8 +160,15 @@ public class Player : PlayerBehavior
         head = transform.Find("Head");
 
         if (networkObject.IsOwner) {
+
+            // Отключаем камеру из меню
+            GameObject menuCam = GameObject.Find("MenuCamera");
+            menuCam.GetComponent<Camera>().enabled = false;
+            menuCam.GetComponent<AudioListener>().enabled = false;
+
             // Забираем главную камеру
-            cams = GameObject.FindGameObjectWithTag("MainCamera").transform;
+            //cams = GameObject.FindGameObjectWithTag("MainCamera").transform;
+            cams = Instantiate(cameras);
 
             // Временно присваиваем родителя, чтобы правильно поставить камеру относительно персонажа
             cams.parent = this.transform;
@@ -163,7 +188,7 @@ public class Player : PlayerBehavior
     }
 
     private void Update() {
-        // Недоумевал, почему не у всех перекрашивается. Надо было до return ставить.
+        // Недоумевал, почему не у всех обратно перекрашивается. Надо было до return ставить.
         if (timerColor1 < Time.time) {
             timerColor1 = Mathf.Infinity;
             ResetColor();
@@ -210,10 +235,10 @@ public class Player : PlayerBehavior
 
         // Прыгаем
         if (inputJump > 0 && isGrounded && !isDead && !isJumping) {
-            timeJump = Time.time;
-            isJumping = true;
-            transform.position += Vector3.up * 0.01f;
-            startJumpSpeed = maxSpeed / 3.0f;
+            //timeJump = Time.time;
+            //isJumping = true;
+            //transform.position += Vector3.up * 0.01f;
+            //startJumpSpeed = maxSpeed / 3.0f;
         }
         
         // Нужно перезапускать таймер прыжка каждый раз, когда меняется isGrounded
@@ -239,6 +264,7 @@ public class Player : PlayerBehavior
 
         // Поворачиваем персонажа по вертикальной оси слева-направо
         transform.Rotate(rotX);
+        _rb.angularVelocity = Vector3.zero;
 
         // Камеры только вверх-вниз
         cams.Rotate(rotY);
@@ -262,79 +288,111 @@ public class Player : PlayerBehavior
 
         // Начинаем проверять виртуальный шар игрока на упирание в препятствия
         // always move along the camera forward as it is the direction that it being aimed at
-        Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
+        //Vector3 desiredMove = transform.forward * inputy + transform.right * inputx;
 
-        // get a normal for the surface that is being touched to move along it
-        RaycastHit hitSurface;
+        //// get a normal for the surface that is being touched to move along it
+        //RaycastHit hitSurface;
 
-        // Здесь мы тыкаем условным шаром на пересечение с поверхностями по горизонталыной плоскости
-        isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitSurface,
-            1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
+        //// Здесь мы тыкаем условным шаром на пересечение с поверхностями по горизонталыной плоскости
+        //isSurface = Physics.SphereCast(transform.position, 1.2f, desiredMove, out hitSurface,
+        //    1.2f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
-        // Вектор проецируемый даёт возможность "скользить" вдоль стен
-        desiredMove = Vector3.ProjectOnPlane(desiredMove, hitSurface.normal).normalized;
+        //// Вектор проецируемый даёт возможность "скользить" вдоль стен
+        //desiredMove = Vector3.ProjectOnPlane(desiredMove, hitSurface.normal).normalized;
 
-        moveDir.x = desiredMove.x * currentSpeed * delta;
-        moveDir.z = desiredMove.z * currentSpeed * delta;
+        //moveDir.x = desiredMove.x * currentSpeed * delta;
+        //moveDir.z = desiredMove.z * currentSpeed * delta;
 
-        RaycastHit hitGround;
+        //RaycastHit hitGround;
 
-        // А здесь мы тыкаем шаром вниз...
-        bool tmpGround = Physics.SphereCast(transform.position + Vector3.up * 100, 0.9f, Vector3.down, out hitGround,
-            200.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
+        //// А здесь мы тыкаем шаром вниз...
+        //bool tmpGround = Physics.SphereCast(transform.position + Vector3.up * 100, 0.9f, Vector3.down, out hitGround,
+        //    200.0f, layerMaskForMoving, QueryTriggerInteraction.Ignore);
 
-        if (tmpGround) {
-            if (transform.position.y - hitGround.point.y <= 0.0f) {
-                transform.position = new Vector3(transform.position.x, hitGround.point.y, transform.position.z);
-                isGrounded = true;
-            }
-            else { isGrounded = false; }
-        }
-        else {
-            isGrounded = false;
-        }
+        //if (tmpGround) {
+        //    if (transform.position.y - hitGround.point.y <= 0.0f) {
+        //        transform.position = new Vector3(transform.position.x, hitGround.point.y, transform.position.z);
+        //        isGrounded = true;
+        //    }
+        //    else { isGrounded = false; }
+        //}
+        //else {
+        //    isGrounded = false;
+        //}
 
-        Text debug = GameObject.Find("DebugInfo").GetComponent<Text>();
-        debug.text = (transform.position.y - hitGround.point.y).ToString("F2");
+        //Text debug = GameObject.Find("DebugInfo").GetComponent<Text>();
+        //debug.text = (transform.position.y - hitGround.point.y).ToString("F2");
 
-        if (!isJumping) {
-            if (!isGrounded) {
-                moveDir.y -= 0.5f * delta;
-            }
-            else {
-                moveDir.y = 0;
-            }
-        }
+        //if (!isJumping) {
+        //    if (!isGrounded) {
+        //        moveDir.y -= 0.5f * delta;
+        //    }
+        //    else {
+        //        moveDir.y = 0;
+        //    }
+        //}
 
-        // y = V0 * sin(a) * t - (g * t * t) / 2.0f
-        // z = V0 * cos(a) * t
-        // Поскольку движение в прыжке определяет игрок, то формула значительно сократилась.
-        // Помним, что косинус 90 это ноль, а синус 90 это единица
+        //// y = V0 * sin(a) * t - (g * t * t) / 2.0f
+        //// z = V0 * cos(a) * t
+        //// Поскольку движение в прыжке определяет игрок, то формула значительно сократилась.
+        //// Помним, что косинус 90 это ноль, а синус 90 это единица
 
-        float t = (Time.time - timeJump) * 1.0f;
+        //float t = (Time.time - timeJump) * 1.0f;
 
-        if (isJumping && !isGrounded) {
-            jumpVector = new Vector3(
-                0,
-                startJumpSpeed * t - (9.81f * t * t) / 2.0f,
-                0
-            );
-        }
-        if (isJumping && isGrounded) {
-            jumpVector = Vector3.zero;
-            isJumping = false;
-        }
-        moveDir += transform.rotation * jumpVector * delta;
+        //if (isJumping && !isGrounded) {
+        //    jumpVector = new Vector3(
+        //        0,
+        //        startJumpSpeed * t - (9.81f * t * t) / 2.0f,
+        //        0
+        //    );
+        //}
+        //if (isJumping && isGrounded) {
+        //    jumpVector = Vector3.zero;
+        //    isJumping = false;
+        //}
+        //moveDir += transform.rotation * jumpVector * delta;
     }
 
     private void LateUpdate() {
-        transform.position += moveDir;
+        //transform.position += moveDir;
 
         // If we are the owner of the object we should send the new position
         // and rotation across the network for receivers to move to in the above code
         networkObject.position = transform.position;
         networkObject.rotation = transform.rotation;
         networkObject.headRotation = head.rotation;
+    }
+
+    private void FixedUpdate() {
+
+        JumpLogic();
+        MoveLogic();
+    }
+
+    private bool _isGrounded {
+        get {
+            var bottomCenterPoint = new Vector3(_collider.bounds.center.x, _collider.bounds.min.y, _collider.bounds.center.z);
+            return Physics.CheckCapsule(_collider.bounds.center, bottomCenterPoint, _collider.bounds.size.x / 2 * 0.9f, GroundLayer);
+        }
+    }
+
+    private Vector3 _movementVector {
+        get {
+            var horizontal = Input.GetAxis("Horizontal");
+            var vertical = Input.GetAxis("Vertical");
+
+            return transform.rotation * new Vector3(horizontal, 0.0f, vertical);
+        }
+    }
+
+    private void MoveLogic() {
+        _rb.AddForce(_movementVector * Speed, ForceMode.VelocityChange);
+    }
+
+    private void JumpLogic() {
+        if (_isGrounded && (Input.GetAxis("Jump") > 0)) {
+            _rb.AddForce(Vector3.up * JumpForce, ForceMode.Impulse);
+        }
     }
 
     //----------------------------Functions -----------------------
@@ -621,6 +679,7 @@ public class Player : PlayerBehavior
 
         isDead = false;
 
+        _rb.velocity = Vector3.zero;
         this.GetComponent<Collider>().isTrigger = false;
         Show();
 

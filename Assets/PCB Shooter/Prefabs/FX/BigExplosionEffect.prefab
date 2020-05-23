@@ -18835,7 +18835,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0b5c6b634cb231439f40db653539700, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  timerRate: 7
+  timerRate: 3
 --- !u!1 &1000012348499044
 GameObject:
   m_ObjectHideFlags: 0
@@ -28105,7 +28105,7 @@ ParticleSystemRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 3eb079016c4106b41bc3f19de570f770, type: 2}
+  - {fileID: 0}
   - {fileID: 0}
   m_StaticBatchInfo:
     firstSubMesh: 0

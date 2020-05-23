@@ -338,12 +338,23 @@ public class MainScript : MonoBehaviour
         {
             ifNickname.text = PlayerPrefs.GetString(keyNickname);
         }
+        string keyIP = "IP";
+        if (PlayerPrefs.HasKey(keyIP)) {
+            ifIpAddress.text = PlayerPrefs.GetString(keyIP);
+        }
+        string keyPort = "Port";
+        if (PlayerPrefs.HasKey(keyPort)) {
+            ifPortNumber.text = PlayerPrefs.GetString(keyPort);
+        }
     }
 
     // Сохраняем настройки
     void SavePrefs()
     {
         PlayerPrefs.SetString("Nickname", ifNickname.text);
+        PlayerPrefs.SetString("IP", ifIpAddress.text);
+        PlayerPrefs.SetString("Port", ifPortNumber.text);
+
         PlayerPrefs.Save();
     }
 
@@ -368,13 +379,13 @@ public class MainScript : MonoBehaviour
         NetWorker.EndSession();
 
         // Обнуляем родителя камеры.    
-        GameObject cam = GameObject.FindGameObjectWithTag("MainCamera");
+        GameObject cam = GameObject.Find("MenuCamera");
         if (cam)
         {
-            cam.transform.SetParent(null);
+            //cam.transform.SetParent(null);
             cam.GetComponent<Camera>().enabled = true;
             //cam.GetComponent<FlareLayer>().enabled = true;
-            cam.GetComponent<AudioListener>().enabled = true;
+            //cam.GetComponent<AudioListener>().enabled = true;
         }
 
         // Удаляем игроков
@@ -386,6 +397,9 @@ public class MainScript : MonoBehaviour
                 GameObject.Destroy(players[i]);
             }
         }
+
+        GameObject game = GameObject.Find("Game(Clone)");
+        Destroy(game);
 
         // Переходим в главное меню
         mainMenuPanel.gameObject.SetActive(true);
